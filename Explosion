@@ -1,0 +1,151 @@
+--------------------------------------------------
+-- MULTIPLAYER SYNCED UPPER BODY EXPLOSION
+--------------------------------------------------
+
+local exploded = false
+local explodeKey = keybinds:newKeybind("Explode Upper Body", "key.keyboard.x")
+
+local parts = {
+    models.model.fake_head,
+    models.model.fake_body,
+    models.model.fake_left_arm,
+    models.model.fake_right_arm
+}
+
+local physics = {}
+local gravity = -0.08
+local bounceDamping = 0.65
+local groundFriction = 0.85
+local minBounceVelocity = 0.15
+
+--------------------------------------------------
+-- KEY PRESS (Owner Only)
+--------------------------------------------------
+
+function explodeKey.press()
+    if player:isOwner() then
+        pings.syncExplosion(not exploded)
+    end
+end
+
+--------------------------------------------------
+-- SYNC FUNCTION (Runs On Everyone)
+--------------------------------------------------
+
+function pings.syncExplosion(state)
+
+    exploded = state
+
+    if exploded then
+
+        -- Hide vanilla upper body
+        vanilla_model.HEAD:setVisible(false)
+        vanilla_model.BODY:setVisible(false)
+        vanilla_model.LEFT_ARM:setVisible(false)
+        vanilla_model.RIGHT_ARM:setVisible(false)
+
+        sounds:playSound(
+            "minecraft:entity.generic.explode",
+            player:getPos(),
+            1,
+            1
+        )
+
+        for i, part in ipairs(parts) do
+            part:setVisible(true)
+            part:setPos(0, 0, 0)
+
+            physics[i] = {
+                velocity = vec(
+                    (math.random() - 0.5) * 1.2,
+                    math.random() * 1.2 + 0.6,
+                    (math.random() - 0.5) * 1.2
+                ),
+                spin = vec(
+                    math.random()*20,
+                    math.random()*20,
+                    math.random()*20
+                )
+            }
+        end
+
+    else
+        restoreBody()
+    end
+end
+
+--------------------------------------------------
+-- RESTORE
+--------------------------------------------------
+
+function restoreBody()
+
+    vanilla_model.HEAD:setVisible(true)
+    vanilla_model.BODY:setVisible(true)
+    vanilla_model.LEFT_ARM:setVisible(true)
+    vanilla_model.RIGHT_ARM:setVisible(true)
+
+    for _, part in ipairs(parts) do
+        part:setVisible(false)
+    end
+
+    physics = {}
+end
+
+--------------------------------------------------
+-- SYNCED PHYSICS
+--------------------------------------------------
+
+function events.tick()
+
+    if not exploded then return end
+
+    for i, part in ipairs(parts) do
+        local data = physics[i]
+        if data then
+
+            -- Gravity
+            data.velocity = data.velocity + vec(0, gravity, 0)
+
+            -- Move
+            local pos = part:getPos() + data.velocity
+            part:setPos(pos)
+
+            -- Spin
+            part:setRot(part:getRot() + data.spin)
+
+            -- Blood trail
+            particles:newParticle(
+                "minecraft:dust 1 0 0 1",
+                player:getPos() + pos
+            )
+
+            -- Ground bounce
+            if pos.y <= -16 then
+                pos.y = -16
+                part:setPos(pos)
+
+                if math.abs(data.velocity.y) > minBounceVelocity then
+                    data.velocity.y = -data.velocity.y * bounceDamping
+                    data.velocity.x = data.velocity.x * groundFriction
+                    data.velocity.z = data.velocity.z * groundFriction
+
+                    -- Impact blood burst
+                    for j = 1, 6 do
+                        particles:newParticle(
+                            "minecraft:dust 1 0 0 1",
+                            player:getPos() + pos + vec(
+                                math.random()-0.5,
+                                0,
+                                math.random()-0.5
+                            )
+                        )
+                    end
+                else
+                    data.velocity = vec(0, 0, 0)
+                    data.spin = data.spin * 0.8
+                end
+            end
+        end
+    end
+end
